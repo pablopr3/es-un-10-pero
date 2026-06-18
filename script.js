@@ -2,8 +2,11 @@ const PREFIX='esun10pero-v1-';
 let peer=null, isHost=false, myId=null, myName='';
 let conns={};            // host: peerId -> DataConnection
 let hostConn=null;       // client: connection to host
-let players=[];          // host authoritative: [{id,name}]
+let players=[];          // host authoritative: [{id,name,avatar}]
 let round={active:null, card:null, revealed:false, num:0, turnIdx:-1};
+let myAvatar=0;
+const AVATARS=['img/pablo.svg','img/walter.svg','img/skii.svg','img/dopi.svg'];
+const AVATAR_NAMES=['Pablo','Walter','Skii','Dopi'];
 
 const $=id=>document.getElementById(id);
 const show=(id,on=true)=>$(id).classList.toggle('hidden',!on);
@@ -30,6 +33,19 @@ function flash(id,msg){$(id).textContent=msg;}
 const urlRoom=new URLSearchParams(location.search).get('room');
 if(urlRoom){$('code').value=urlRoom.toUpperCase();}
 
+// selector de avatar
+function renderAvatarPicker(){
+  const box=$('avatar-picker'); if(!box)return; box.innerHTML='';
+  AVATARS.forEach((src,i)=>{
+    const o=document.createElement('div');
+    o.className='avatar-opt'+(i===myAvatar?' sel':'');
+    o.innerHTML='<img class="av" src="'+src+'" alt="'+AVATAR_NAMES[i]+'"><div class="nm">'+AVATAR_NAMES[i]+'</div>';
+    o.onclick=()=>{myAvatar=i;renderAvatarPicker();};
+    box.appendChild(o);
+  });
+}
+renderAvatarPicker();
+
 // ---------- HOST ----------
 function createRoom(){
   const code=randCode();
@@ -37,7 +53,7 @@ function createRoom(){
   peer=new Peer(PREFIX+code);
   peer.on('open',()=>{
     myId=peer.id;
-    players=[{id:myId,name:myName}];
+    players=[{id:myId,name:myName,avatar:myAvatar}];
     enterRoom(code);
     setupHostControls();
     renderPlayers();
@@ -55,7 +71,7 @@ function createRoom(){
 }
 function hostOnData(conn,d){
   if(d.type==='join'){
-    if(!players.find(p=>p.id===conn.peer)) players.push({id:conn.peer,name:d.name});
+    if(!players.find(p=>p.id===conn.peer)) players.push({id:conn.peer,name:d.name,avatar:d.avatar||0});
     broadcastState(); renderPlayers();
     if(round.active) sendRound(); // por si entra a mitad
   }
@@ -63,6 +79,16 @@ function hostOnData(conn,d){
 function broadcastState(){
   const msg={type:'state',players};
   Object.values(conns).forEach(c=>{try{c.send(msg);}catch(e){}});
+}
+function kickPlayer(id){
+  if(id===myId)return;
+  const c=conns[id];
+  if(c){ try{c.send({type:'kicked'});}catch(e){} setTimeout(()=>{try{c.close();}catch(e){}},250); }
+  delete conns[id];
+  players=players.filter(p=>p.id!==id);
+  if(round.active===id) round.active=null;
+  broadcastState(); renderPlayers();
+  flash('game-status','Has expulsado a un jugador.');
 }
 function setupHostControls(){
   const c=$('host-controls'); c.innerHTML='';
@@ -110,6 +136,11 @@ function joinRoom(code){
 function clientOnData(d){
   if(d.type==='state'){players=d.players;renderPlayers();}
   else if(d.type==='round'){applyRound(d);}
+  else if(d.type==='kicked'){
+    show('game',false); show('screen-room',false); show('screen-home',true);
+    flash('home-status','El anfitrión te ha expulsado de la sala. 👋');
+    try{peer.destroy();}catch(e){}
+  }
 }
 
 // ---------- COMÚN ----------
@@ -120,12 +151,19 @@ function enterRoom(code){
   if(!isHost){show('host-controls',false);}
 }
 function renderPlayers(){
-  [['players'],['players-game']].forEach(([id])=>{
+  ['players','players-game'].forEach(id=>{
     const box=$(id); if(!box)return; box.innerHTML='';
     players.forEach((p,i)=>{
       const t=document.createElement('span');
       t.className='ptag'+(i===0?' host':'')+(p.id===round.active?' active':'');
-      t.textContent=p.name+(i===0?' 👑':'')+(p.id===myId?' (tú)':'');
+      const av='<img class="av-mini" src="'+AVATARS[p.avatar||0]+'" alt="">';
+      t.innerHTML=av+'<span>'+p.name+(i===0?' 👑':'')+(p.id===myId?' (tú)':'')+'</span>';
+      if(isHost && p.id!==myId){
+        const k=document.createElement('button');
+        k.className='kick'; k.textContent='✕'; k.title='Expulsar';
+        k.onclick=()=>kickPlayer(p.id);
+        t.appendChild(k);
+      }
       box.appendChild(t);
     });
   });
