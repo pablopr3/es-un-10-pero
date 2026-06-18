@@ -5,8 +5,9 @@ let hostConn=null;       // client: connection to host
 let players=[];          // host authoritative: [{id,name,avatar}]
 let round={active:null, card:null, revealed:false, num:0, turnIdx:-1};
 let myAvatar=0;
-const AVATARS=['img/pablo.svg','img/walter.svg','img/skii.svg','img/dopi.svg'];
-const AVATAR_NAMES=['Pablo','Walter','Skii','Dopi'];
+let spinning=false, pendingRound=null;
+const AVATARS=['img/pablo.svg','img/walter.svg','img/skii.svg','img/dopi.svg','img/xokas.svg','img/chica.svg'];
+const AVATAR_NAMES=['Pablo','Walter','Skii','Dopi','Xokas','Chica'];
 
 const $=id=>document.getElementById(id);
 const show=(id,on=true)=>$(id).classList.toggle('hidden',!on);
@@ -57,7 +58,7 @@ function createRoom(){
     enterRoom(code);
     setupHostControls();
     renderPlayers();
-    flash('room-status','Comparte el enlace y dale a EMPEZAR cuando estéis todos.');
+    flash('room-status','Comparte el enlace y dale a GIRAR cuando estéis todos.');
   });
   peer.on('error',err=>{
     if(err.type==='unavailable-id'){createRoom();return;} // código pillado, reintenta
@@ -90,23 +91,78 @@ function kickPlayer(id){
   broadcastState(); renderPlayers();
   flash('game-status','Has expulsado a un jugador.');
 }
+function mkbtn(id,cls,txt,fn){const b=document.createElement('button');b.id=id;b.className=cls;b.textContent=txt;b.onclick=fn;return b;}
 function setupHostControls(){
   const c=$('host-controls'); c.innerHTML='';
-  const next=document.createElement('button');
-  next.className='btn primary'; next.id='btn-next'; next.textContent='Empezar ronda';
-  next.onclick=()=>{
+  const spin=mkbtn('btn-spin','btn primary','🎡 Girar ruleta',()=>{
+    if(spinning)return;
     if(players.length<2){flash('game-status','Hace falta al menos 2 jugadores.');return;}
-    round.turnIdx=(round.turnIdx+1)%players.length;
-    round.active=players[round.turnIdx].id;
-    round.num=rand10(); round.revealed=false;
-    sendRound();
-    $('btn-next').textContent='Siguiente ronda';
-    $('btn-reveal').disabled=false;
-  };
-  const rev=document.createElement('button');
-  rev.className='btn pink'; rev.id='btn-reveal'; rev.textContent='Revelar carta'; rev.disabled=true;
-  rev.onclick=()=>{ if(!round.active)return; round.revealed=true; sendRound(); rev.disabled=true; };
-  c.appendChild(next); c.appendChild(rev);
+    const w=players[Math.floor(Math.random()*players.length)].id;
+    startSpin(w);
+  });
+  const pick=mkbtn('btn-pick','btn ghost','✋ Elegir yo',()=>{ if(!spinning) togglePicker(); });
+  const rev=mkbtn('btn-reveal','btn pink','Revelar carta',()=>{
+    if(!round.active||spinning)return; round.revealed=true; sendRound(); rev.disabled=true;
+  });
+  rev.disabled=true;
+  c.appendChild(spin); c.appendChild(pick); c.appendChild(rev);
+  const picker=document.createElement('div'); picker.id='host-picker'; picker.className='picker hidden';
+  c.appendChild(picker);
+}
+function togglePicker(){
+  const p=$('host-picker'); p.innerHTML='';
+  players.forEach(pl=>{
+    const b=document.createElement('button'); b.className='btn ghost pick-opt';
+    b.innerHTML='<img src="'+AVATARS[pl.avatar||0]+'">'+pl.name;
+    b.onclick=()=>{ p.classList.add('hidden'); startSpin(pl.id); };
+    p.appendChild(b);
+  });
+  p.classList.toggle('hidden');
+}
+function startSpin(winnerId){
+  round.active=winnerId; round.num=rand10(); round.revealed=false;
+  const order=players.map(p=>p.id);
+  Object.values(conns).forEach(c=>{try{c.send({type:'spin',order,winnerId});}catch(e){}});
+  const rev=$('btn-reveal'); if(rev) rev.disabled=true;
+  runSpin(order,winnerId,()=>{ if(rev) rev.disabled=false; sendRound(); });
+}
+
+// ---------- RULETA (host y cliente) ----------
+function buildTrack(order){
+  const tr=$('rtrack'); tr.innerHTML='';
+  order.forEach(id=>{
+    const p=players.find(x=>x.id===id)||{avatar:0,name:'?'};
+    const d=document.createElement('div'); d.className='rcell';
+    d.innerHTML='<img src="'+AVATARS[p.avatar||0]+'" alt=""><span>'+p.name+'</span>';
+    tr.appendChild(d);
+  });
+}
+function highlight(idx){
+  const cells=$('rtrack').children;
+  for(let i=0;i<cells.length;i++) cells[i].classList.toggle('hl',i===idx);
+}
+function runSpin(order,winnerId,done){
+  show('roulette',true);
+  $('rmsg').textContent='🎡 Girando la ruleta…';
+  $('turninfo').textContent='';
+  buildTrack(order);
+  spinning=true;
+  const n=order.length, winIdx=Math.max(0,order.indexOf(winnerId));
+  const loops=4, totalSteps=loops*n+winIdx, DUR=3000, t0=performance.now();
+  function frame(now){
+    const prog=Math.min((now-t0)/DUR,1);
+    const ease=1-Math.pow(1-prog,3);
+    highlight(Math.floor(ease*totalSteps)%n);
+    if(prog<1){requestAnimationFrame(frame);}
+    else{
+      highlight(winIdx); spinning=false;
+      const w=players.find(x=>x.id===winnerId);
+      $('rmsg').innerHTML='👉 ¡Le toca a <b>'+(w?w.name:'?')+'</b>!';
+      if(pendingRound){const d=pendingRound;pendingRound=null;applyRound(d);}
+      if(done) done();
+    }
+  }
+  requestAnimationFrame(frame);
 }
 function sendRound(){
   players.forEach(p=>{
@@ -126,7 +182,7 @@ function joinRoom(code){
     myId=peer.id;
     hostConn=peer.connect(PREFIX+code,{reliable:true});
     let opened=false;
-    hostConn.on('open',()=>{opened=true; hostConn.send({type:'join',name:myName}); enterRoom(code); flash('room-status','¡Dentro! Esperando al anfitrión…');});
+    hostConn.on('open',()=>{opened=true; hostConn.send({type:'join',name:myName,avatar:myAvatar}); enterRoom(code); flash('room-status','¡Dentro! Esperando al anfitrión…');});
     hostConn.on('data',clientOnData);
     hostConn.on('close',()=>flash('game-status','Se cerró la conexión con el anfitrión.'));
     setTimeout(()=>{if(!opened)flash('home-status','No se encontró la sala. Revisa el código.');},6000);
@@ -135,6 +191,7 @@ function joinRoom(code){
 }
 function clientOnData(d){
   if(d.type==='state'){players=d.players;renderPlayers();}
+  else if(d.type==='spin'){runSpin(d.order,d.winnerId);}
   else if(d.type==='round'){applyRound(d);}
   else if(d.type==='kicked'){
     show('game',false); show('screen-room',false); show('screen-home',true);
@@ -169,6 +226,7 @@ function renderPlayers(){
   });
 }
 function applyRound(d){
+  if(spinning){pendingRound=d;return;}
   round.active=d.activeId; round.revealed=d.revealed;
   const card=$('card'); const amActive=d.activeId===myId;
   renderPlayers();
