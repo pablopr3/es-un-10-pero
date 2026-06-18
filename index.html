@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Es un 10 pero... · Online</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Es un <span class="pink">10</span> <span class="yellow">pero...</span></h1>
+  <p class="sub">Al que le toca <b>no ve su carta</b>; los demás sí. ¡Online con tus amigos!</p>
+
+  <!-- PANTALLA 1: ENTRADA -->
+  <div class="panel" id="screen-home">
+    <label for="name">Tu nombre</label>
+    <input id="name" maxlength="14" placeholder="Ej. Pablo" autocomplete="off">
+    <button class="btn primary" id="btn-create">Crear sala 🎴</button>
+    <div class="or">— o únete a una sala —</div>
+    <label for="code">Código de sala</label>
+    <input id="code" class="code" maxlength="5" placeholder="ABCD" autocomplete="off">
+    <button class="btn pink" id="btn-join">Unirme</button>
+    <div class="status" id="home-status"></div>
+  </div>
+
+  <!-- PANTALLA 2: SALA / JUEGO -->
+  <div class="panel hidden" id="screen-room" style="text-align:center;">
+    <div id="lobby">
+      <div style="opacity:.7;font-size:.85rem;">Código de la sala</div>
+      <div class="roomcode" id="room-code">----</div>
+      <div class="copy">
+        <input id="share-link" readonly>
+        <button class="btn ghost" id="btn-copy" style="margin-top:0;width:auto;padding:13px 16px;">Copiar</button>
+      </div>
+      <div class="players" id="players"></div>
+      <div class="status" id="room-status">Esperando jugadores…</div>
+    </div>
+  </div>
+
+  <!-- ZONA DE JUEGO -->
+  <div class="hidden" id="game" style="display:flex;flex-direction:column;align-items:center;width:100%;">
+    <div class="scene"><div class="card" id="card">
+      <div class="face back"><div class="q">?</div><div class="lbl">ES UN 10 PERO…</div></div>
+      <div class="face front"><span class="number" id="number">?</span><span class="label">puntos</span></div>
+    </div></div>
+    <div class="turninfo" id="turninfo"></div>
+    <div class="players" id="players-game"></div>
+    <div class="controls" id="host-controls"></div>
+    <div class="status" id="game-status"></div>
+  </div>
+
+  <div class="rules" id="rules">
+    Un jugador dice algo o a alguien: <em>"es un 10, pero…"</em> y suelta un defecto.
+    El que tiene el turno no ve la nota que le ha tocado — ¡los demás sí y se ríen!
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
