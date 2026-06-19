@@ -7,6 +7,17 @@ let round={active:null, card:null, revealed:false, num:0};
 let myAvatar=0;
 let spinning=false, pendingRound=null, started=false;
 
+// Servidores ICE: STUN + TURN gratuitos. El TURN hace de "relé" cuando la
+// conexión directa P2P falla (routers estrictos), evitando que peten las salas con varios jugadores.
+const PEER_CONFIG={ config:{ iceServers:[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'turn:freestun.net:3478',username:'free',credential:'free'},
+  {urls:'turns:freestun.net:5350',username:'free',credential:'free'},
+  {urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},
+  {urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'}
+]}};
+
 // Avatares incrustados (SVG inline) -> siempre se ven, sin depender de archivos
 const AVATARS=[
 `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" fill="#ffffff"/><g fill="none" stroke="#1a1a1a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 52 Q20 24 50 20 Q82 24 80 54 Q79 82 50 85 Q23 82 22 52Z"/><path d="M34 27 Q46 21 60 27"/><rect x="30" y="42" width="16" height="12" rx="4"/><rect x="54" y="42" width="16" height="12" rx="4"/><path d="M46 48 L54 48"/><circle cx="38" cy="48" r="1.6" fill="#1a1a1a"/><circle cx="62" cy="48" r="1.6" fill="#1a1a1a"/><path d="M40 66 Q50 72 60 64"/></g></svg>`,
@@ -61,7 +72,8 @@ renderAvatarPicker();
 function createRoom(){
   const code=randCode();
   flash('home-status','Creando sala…');
-  peer=new Peer(PREFIX+code);
+  peer=new Peer(PREFIX+code, PEER_CONFIG);
+  peer.on('disconnected',()=>{try{peer.reconnect();}catch(e){}});
   peer.on('open',()=>{
     myId=peer.id;
     players=[{id:myId,name:myName,avatar:myAvatar}];
@@ -75,8 +87,10 @@ function createRoom(){
     flash('home-status','Error: '+err.type);
   });
   peer.on('connection',conn=>{
-    conn.on('open',()=>{ conns[conn.peer]=conn; });
+    conns[conn.peer]=conn;                       // guardar al instante (evita perder a quien entra)
+    conn.on('open',()=>{ conns[conn.peer]=conn; broadcastState(); });
     conn.on('data',d=>hostOnData(conn,d));
+    conn.on('error',()=>{});                      // no tumbar la sala por un fallo puntual
     conn.on('close',()=>{ delete conns[conn.peer]; players=players.filter(p=>p.id!==conn.peer); broadcastState(); renderPlayers(); });
   });
 }
@@ -192,15 +206,17 @@ function sendRound(){
 // ---------- CLIENTE ----------
 function joinRoom(code){
   flash('home-status','Conectando…');
-  peer=new Peer();
+  peer=new Peer(PEER_CONFIG);
+  peer.on('disconnected',()=>{try{peer.reconnect();}catch(e){}});
   peer.on('open',()=>{
     myId=peer.id;
     hostConn=peer.connect(PREFIX+code,{reliable:true});
     let opened=false;
     hostConn.on('open',()=>{opened=true; hostConn.send({type:'join',name:myName,avatar:myAvatar}); enterRoom(code); flash('room-status','¡Dentro! Esperando al anfitrión…');});
     hostConn.on('data',clientOnData);
+    hostConn.on('error',()=>{});
     hostConn.on('close',()=>flash('game-status','Se cerró la conexión con el anfitrión.'));
-    setTimeout(()=>{if(!opened)flash('home-status','No se encontró la sala. Revisa el código.');},6000);
+    setTimeout(()=>{if(!opened)flash('home-status','No se encontró la sala (o tu red bloquea la conexión). Revisa el código e inténtalo de nuevo.');},9000);
   });
   peer.on('error',err=>{flash('home-status','Error: '+(err.type==='peer-unavailable'?'sala no encontrada':err.type));});
 }
