@@ -204,21 +204,48 @@ function sendRound(){
 }
 
 // ---------- CLIENTE ----------
+let joinTimer=null, joinDone=false, joinAttempts=0, joinCode='';
 function joinRoom(code){
-  flash('home-status','Conectando…');
+  joinCode=code; joinDone=false; joinAttempts=0;
+  attemptJoin();
+}
+function attemptJoin(){
+  if(joinDone) return;
+  joinAttempts++;
+  flash('home-status','Conectando… (intento '+joinAttempts+'/6)');
+  if(peer){try{peer.destroy();}catch(e){}}
   peer=new Peer(PEER_CONFIG);
   peer.on('disconnected',()=>{try{peer.reconnect();}catch(e){}});
   peer.on('open',()=>{
+    if(joinDone) return;
     myId=peer.id;
-    hostConn=peer.connect(PREFIX+code,{reliable:true});
-    let opened=false;
-    hostConn.on('open',()=>{opened=true; hostConn.send({type:'join',name:myName,avatar:myAvatar}); enterRoom(code); flash('room-status','¡Dentro! Esperando al anfitrión…');});
-    hostConn.on('data',clientOnData);
-    hostConn.on('error',()=>{});
-    hostConn.on('close',()=>flash('game-status','Se cerró la conexión con el anfitrión.'));
-    setTimeout(()=>{if(!opened)flash('home-status','No se encontró la sala (o tu red bloquea la conexión). Revisa el código e inténtalo de nuevo.');},9000);
+    const hc=peer.connect(PREFIX+joinCode,{reliable:true});
+    hostConn=hc;
+    hc.on('open',()=>{
+      joinDone=true; clearTimeout(joinTimer);
+      hc.send({type:'join',name:myName,avatar:myAvatar});
+      enterRoom(joinCode); flash('room-status','¡Dentro! Esperando al anfitrión…');
+    });
+    hc.on('data',clientOnData);
+    hc.on('error',()=>{});
+    hc.on('close',()=>{ if(joinDone) flash('game-status','Se cerró la conexión con el anfitrión.'); });
   });
-  peer.on('error',err=>{flash('home-status','Error: '+(err.type==='peer-unavailable'?'sala no encontrada':err.type));});
+  peer.on('error',err=>{
+    if(joinDone) return;
+    // errores recuperables -> reintentar enseguida
+    if(['peer-unavailable','network','server-error','socket-error','socket-closed','disconnected'].includes(err.type) && joinAttempts<6){
+      clearTimeout(joinTimer); setTimeout(attemptJoin,1200);
+    } else if(joinAttempts>=6){
+      flash('home-status','No hay forma de conectar. Tu red puede bloquear WebRTC: prueba con datos móviles o que el anfitrión recree la sala.');
+    }
+  });
+  // si en 8s no ha abierto, reintenta automáticamente
+  clearTimeout(joinTimer);
+  joinTimer=setTimeout(()=>{
+    if(joinDone) return;
+    if(joinAttempts<6){ attemptJoin(); }
+    else { flash('home-status','No se encontró la sala o tu red bloquea la conexión. Prueba datos móviles, o pulsa "Unirme" otra vez.'); }
+  },8000);
 }
 function clientOnData(d){
   if(d.type==='state'){players=d.players;renderPlayers();}
